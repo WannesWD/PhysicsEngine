@@ -321,3 +321,21 @@ ComPtr<ID3D12DescriptorHeap> CreateDescriptorHeap(ComPtr<ID3D12Device2> device,
 
     return descriptorHeap;
 }
+
+void UpdateRenderTargetViews(ComPtr<ID3D12Device2> device, ComPtr<IDXGISwapChain4> swapchain,
+    ComPtr<ID3D12DescriptorHeap> descriptorHeap)
+{
+    auto rtvDescriptorSize{ device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV) };
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(descriptorHeap->GetCPUDescriptorHandleForHeapStart());
+
+    for (size_t i = 0; i < g_NumFrames; i++)
+    {
+        ComPtr<ID3D12Resource> backBuffer;
+        ThrowIfFailed(swapchain->GetBuffer(i, IID_PPV_ARGS(&backBuffer)));
+
+        device->CreateRenderTargetView(backBuffer.Get(), nullptr, rtvHandle);
+        g_BackBuffers[i] = backBuffer;
+
+        rtvHandle.Offset(rtvDescriptorSize);
+    }
+}
