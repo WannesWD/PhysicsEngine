@@ -39,7 +39,7 @@ uint32_t g_ClientHeight{ 720 };
 bool g_IsInitialized{ false };
 
 // window handle
-HWND g_hwnd{};
+HWND g_hWnd{};
 
 // window rect
 RECT g_WindowRect{};
@@ -374,4 +374,222 @@ HANDLE CreateEventHandle()
     assert(fenceEvent && "Failed to create fence event.");
 
     return fenceEvent;
+}
+
+uint64_t Signal(ComPtr<ID3D12CommandQueue> commandQueue, ComPtr<ID3D12Fence> fence, uint64_t& fenceValue)
+{
+    uint64_t fenceValueForSignal = ++fenceValue;
+    ThrowIfFailed(commandQueue->Signal(fence.Get(), fenceValueForSignal));
+
+    return fenceValueForSignal;
+}
+
+void WaitForFenceValue(ComPtr<ID3D12Fence> fence, uint64_t fenceValue, HANDLE fenceEvent,
+    std::chrono::milliseconds duration = std::chrono::milliseconds::max())
+{
+    if (fence->GetCompletedValue() < fenceValue)
+    {
+        ThrowIfFailed(fence->SetEventOnCompletion(fenceValue, fenceEvent));
+        ::WaitForSingleObject(fenceEvent, static_cast<DWORD>(duration.count()));
+    }
+}
+
+void Flush(ComPtr<ID3D12CommandQueue> commandQueue, ComPtr<ID3D12Fence> fence, uint64_t& fenceValue,
+    HANDLE fenceEvent)
+{
+    uint64_t fenceValueForSignal = Signal(commandQueue, fence, fenceValue);
+
+    WaitForFenceValue(fence, fenceValueForSignal, fenceEvent);
+}
+
+void Update()
+{
+    static uint64_t frameCounter{ 0 };
+    static double elapsedSeconds{ 0.0 };
+    static std::chrono::high_resolution_clock clock{};
+    static auto t0 = clock.now();
+
+    ++frameCounter;
+    auto t1 = clock.now();
+    auto deltatime = t1 - t0;
+    t0 = t1;
+
+    elapsedSeconds += deltatime.count() * 1e-9;
+    if (elapsedSeconds > 1.0)
+    {
+        char buffer[500]{};
+        auto fps = frameCounter / elapsedSeconds;
+        printf_s(buffer, 500, "FPS: %f\n", fps);
+        OutputDebugString(buffer);
+
+        frameCounter = 0;
+        elapsedSeconds = 0.0;
+    }
+}
+
+void Render()
+{
+    auto commandAllocator{ g_CommandAlloctors[g_CurrentBackBufferIndex] };
+    auto backBuffer {g_BackBuffers[g_CurrentBackBufferIndex]};
+
+    commandAllocator->Reset();
+    g_CommandList->Reset(commandAllocator.Get(), nullptr);
+
+    //clear render target
+    CD3DX12_RESOURCE_BARRIER barrier{ CD3DX12_RESOURCE_BARRIER::Transition(
+        backBuffer.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET) };
+
+    g_CommandList->ResourceBarrier(1, &barrier);
+
+    FLOAT clearColor[]{ .4f,.6f,.9f,1.f };
+    CD3DX12_CPU_DESCRIPTOR_HANDLE rtv(g_RTVDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
+        g_CurrentBackBufferIndex, g_RTVDescriptorSize);
+    g_CommandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+
+    // present
+    CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer.Get(),
+        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+
+    g_CommandList->ResourceBarrier(1, &barrier);
+    ThrowIfFailed(g_CommandList->Close());
+
+    ID3D12CommandList* const commandLists[]{ g_CommandList.Get() };
+    g_CommandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
+
+    UINT syncInterval = g_VSync ? 1 : 0;
+    UINT presentFlags = g_TearingSupported && !g_VSync ? DXGI_PRESENT_ALLOW_TEARING : 0;
+    ThrowIfFailed(g_SwapChain->Present(syncInterval, presentFlags));
+
+    g_FrameFenceValues[g_CurrentBackBufferIndex] = Signal(g_CommandQueue, g_Fence, g_FenceValue);
+
+    g_CurrentBackBufferIndex = g_SwapChain->GetCurrentBackBufferIndex();
+    WaitForFenceValue(g_Fence, g_FrameFenceValues[g_CurrentBackBufferIndex], g_FenceEvent);
+}
+
+void Resize(uint32_t width, uint32_t height)
+{
+    if (g_ClientWidth != width || g_ClientHeight != height)
+    {
+        g_ClientWidth = std::max(1u, width);
+        g_ClientHeight = std::max(1u, height);
+
+        Flush(g_CommandQueue, g_Fence, g_FenceValue, g_FenceEvent);
+
+        for (size_t i = 0; i < g_NumFrames; i++)
+        {
+            g_BackBuffers[i].Reset();
+            g_FrameFenceValues[i] = g_FrameFenceValues[g_CurrentBackBufferIndex];
+        }
+
+        DXGI_SWAP_CHAIN_DESC swapChainDesc{};
+        ThrowIfFailed(g_SwapChain->GetDesc(&swapChainDesc));
+        ThrowIfFailed(g_SwapChain->ResizeBuffers(g_NumFrames, g_ClientWidth, 
+            g_ClientHeight, swapChainDesc.BufferDesc.Format, swapChainDesc.Flags));
+
+        UpdateRenderTargetViews(g_Device, g_SwapChain, g_RTVDescriptorHeap);
+    }
+}
+
+void SetFullScreen(bool fullscreen)
+{
+    if (g_Fullscreen != fullscreen)
+    {
+        g_Fullscreen = fullscreen;
+
+        if (g_Fullscreen)
+        {
+            ::GetWindowRect(g_hWnd, &g_WindowRect);
+
+            UINT windowStyle = WS_OVERLAPPEDWINDOW & ~(WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+            ::SetWindowLongW(g_hWnd, GWL_STYLE, windowStyle);
+
+            HMONITOR hMonitor = ::MonitorFromWindow(g_hWnd, MONITOR_DEFAULTTONEAREST);
+            MONITORINFOEX monitorInfo{};
+            monitorInfo.cbSize = sizeof(MONITORINFOEX);
+            ::GetMonitorInfo(hMonitor, &monitorInfo);
+
+            ::SetWindowPos(g_hWnd, HWND_TOP,
+                monitorInfo.rcMonitor.left,
+                monitorInfo.rcMonitor.top,
+                monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left,
+                monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE);
+
+            ::ShowWindow(g_hWnd, SW_MAXIMIZE);
+        }
+    }
+    else
+    {
+        ::SetWindowLong(g_hWnd, GWL_STYLE, WS_OVERLAPPEDWINDOW);
+
+        ::SetWindowPos(g_hWnd, HWND_NOTOPMOST,
+            g_WindowRect.left,
+            g_WindowRect.top,
+            g_WindowRect.right - g_WindowRect.left,
+            g_WindowRect.bottom - g_WindowRect.top,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE);
+
+        ::ShowWindow(g_hWnd, SW_NORMAL);
+    }
+}
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (g_IsInitialized)
+    {
+        switch (message)
+        {
+        case WM_PAINT:
+            Update();
+            Render();
+            break;
+        case WM_SYSKEYDOWN:
+        case WM_KEYDOWN:
+        {
+            bool alt{ (::GetAsyncKeyState(VK_MENU) & 0x8000) != 0};
+
+            switch (wParam)
+            {
+            case 'V':
+                g_VSync = !g_VSync;
+                break;
+            case VK_ESCAPE:
+                ::PostQuitMessage(0);
+                break;
+            case VK_RETURN:
+                if (alt)
+                {
+            case VK_F11:
+                SetFullScreen(!g_Fullscreen);
+                }
+                break;
+            }
+            break;
+        }
+        case WM_SYSCHAR:
+            break;
+        case WM_SIZE:
+        {
+            RECT clientRect{};
+            ::GetClientRect(g_hWnd, &clientRect);
+
+            int width = clientRect.right - clientRect.left;
+            int height = clientRect.bottom - clientRect.top;
+
+            Resize(width, height);
+            break;
+        }
+        case WM_DESTROY:
+            ::PostQuitMessage(0);
+            break;
+        default:
+            return ::DefWindowProcW(hwnd, message, wParam, lParam);
+        }
+    }
+    else
+    {
+        return ::DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
+    return 0;
 }
