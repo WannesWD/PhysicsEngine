@@ -39,27 +39,27 @@ uint32_t g_ClientHeight{ 720 };
 bool g_IsInitialized{ false };
 
 // window handle
-HWND g_hWnd{};
+HWND g_hWnd;
 
 // window rect
-RECT g_WindowRect{};
+RECT g_WindowRect;
 
 // Dx12 objects
-ComPtr<ID3D12Device2> g_Device{};
-ComPtr<ID3D12CommandQueue> g_CommandQueue{};
-ComPtr<IDXGISwapChain4> g_SwapChain{};
-ComPtr<ID3D12Resource> g_BackBuffers[g_NumFrames]{};
-ComPtr<ID3D12GraphicsCommandList> g_CommandList{};
-ComPtr<ID3D12CommandAllocator> g_CommandAlloctors[g_NumFrames]{};
-ComPtr<ID3D12DescriptorHeap> g_RTVDescriptorHeap{};
-UINT g_RTVDescriptorSize{};
-UINT g_CurrentBackBufferIndex{};
+ComPtr<ID3D12Device2> g_Device;
+ComPtr<ID3D12CommandQueue> g_CommandQueue;
+ComPtr<IDXGISwapChain4> g_SwapChain;
+ComPtr<ID3D12Resource> g_BackBuffers[g_NumFrames];
+ComPtr<ID3D12GraphicsCommandList> g_CommandList;
+ComPtr<ID3D12CommandAllocator> g_CommandAllocators[g_NumFrames];
+ComPtr<ID3D12DescriptorHeap> g_RTVDescriptorHeap;
+UINT g_RTVDescriptorSize;
+UINT g_CurrentBackBufferIndex;
 
 // sync object
-ComPtr<ID3D12Fence> g_Fence{};
+ComPtr<ID3D12Fence> g_Fence;
 uint64_t g_FenceValue{ 0 };
 uint64_t g_FrameFenceValues[g_NumFrames]{};
-HANDLE g_FenceEvent{};
+HANDLE g_FenceEvent;
 
 bool g_VSync{ true };
 bool g_TearingSupported{ false };
@@ -171,21 +171,22 @@ ComPtr<IDXGIAdapter4> GetAdapter(bool useWarp)
     {
         ThrowIfFailed(dxgiFactory->EnumWarpAdapter(IID_PPV_ARGS(&dxgiAdapter1)));
         ThrowIfFailed(dxgiAdapter1.As(&dxgiAdapter4));
-        return NULL;
     }
-
-    SIZE_T maxDedicatedVideoMemory{ 0 };
-    for (UINT i = 0; dxgiFactory->EnumAdapters1(i,&dxgiAdapter1) != DXGI_ERROR_NOT_FOUND; i++)
+    else
     {
-        DXGI_ADAPTER_DESC1 dxgiAdapterDesc1{};
-        dxgiAdapter1->GetDesc1(&dxgiAdapterDesc1);
-
-        if ((dxgiAdapterDesc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
-            SUCCEEDED(D3D12CreateDevice(dxgiAdapter1.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)) &&
-            dxgiAdapterDesc1.DedicatedVideoMemory > maxDedicatedVideoMemory)
+        SIZE_T maxDedicatedVideoMemory{ 0 };
+        for (UINT i = 0; dxgiFactory->EnumAdapters1(i, &dxgiAdapter1) != DXGI_ERROR_NOT_FOUND; i++)
         {
-            maxDedicatedVideoMemory = dxgiAdapterDesc1.DedicatedVideoMemory;
-            ThrowIfFailed(dxgiAdapter1.As(&dxgiAdapter4));
+            DXGI_ADAPTER_DESC1 dxgiAdapterDesc1{};
+            dxgiAdapter1->GetDesc1(&dxgiAdapterDesc1);
+
+            if ((dxgiAdapterDesc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
+                SUCCEEDED(D3D12CreateDevice(dxgiAdapter1.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)) &&
+                dxgiAdapterDesc1.DedicatedVideoMemory > maxDedicatedVideoMemory)
+            {
+                maxDedicatedVideoMemory = dxgiAdapterDesc1.DedicatedVideoMemory;
+                ThrowIfFailed(dxgiAdapter1.As(&dxgiAdapter4));
+            }
         }
     }
 
@@ -304,6 +305,8 @@ ComPtr<IDXGISwapChain4> CreateSwapChain(HWND hWnd, ComPtr<ID3D12CommandQueue> co
         nullptr,
         &swapChain1));
 
+    ThrowIfFailed(dxgiFactory4->MakeWindowAssociation(hWnd, DXGI_MWA_NO_ALT_ENTER));
+
     ThrowIfFailed(swapChain1.As(&dxgiSwapChain4));
 
     return dxgiSwapChain4;
@@ -342,7 +345,7 @@ void UpdateRenderTargetViews(ComPtr<ID3D12Device2> device, ComPtr<IDXGISwapChain
 
 ComPtr<ID3D12CommandAllocator> CreateCommandAllocator(ComPtr<ID3D12Device2> device, D3D12_COMMAND_LIST_TYPE type)
 {
-    ComPtr<ID3D12CommandAllocator> commandAllocator{};
+    ComPtr<ID3D12CommandAllocator> commandAllocator;
     ThrowIfFailed(device->CreateCommandAllocator(type, IID_PPV_ARGS(&commandAllocator)));
 
     return commandAllocator;
@@ -351,8 +354,10 @@ ComPtr<ID3D12CommandAllocator> CreateCommandAllocator(ComPtr<ID3D12Device2> devi
 ComPtr<ID3D12GraphicsCommandList> CreateCommandList(ComPtr<ID3D12Device2> device,
     ComPtr<ID3D12CommandAllocator> commandAllocator, D3D12_COMMAND_LIST_TYPE type)
 {
-    ComPtr<ID3D12GraphicsCommandList> commandList{};
+    ComPtr<ID3D12GraphicsCommandList> commandList;
     ThrowIfFailed(device->CreateCommandList(0, type, commandAllocator.Get(), nullptr, IID_PPV_ARGS(&commandList)));
+
+    ThrowIfFailed(commandList->Close());
 
     return commandList;
 }
@@ -368,7 +373,7 @@ ComPtr<ID3D12Fence> CreateFence(ComPtr<ID3D12Device2> device)
 
 HANDLE CreateEventHandle()
 {
-    HANDLE fenceEvent{};
+    HANDLE fenceEvent;
 
     fenceEvent = ::CreateEvent(NULL, FALSE, FALSE, NULL);
     assert(fenceEvent && "Failed to create fence event.");
@@ -398,7 +403,6 @@ void Flush(ComPtr<ID3D12CommandQueue> commandQueue, ComPtr<ID3D12Fence> fence, u
     HANDLE fenceEvent)
 {
     uint64_t fenceValueForSignal = Signal(commandQueue, fence, fenceValue);
-
     WaitForFenceValue(fence, fenceValueForSignal, fenceEvent);
 }
 
@@ -429,41 +433,47 @@ void Update()
 
 void Render()
 {
-    auto commandAllocator{ g_CommandAlloctors[g_CurrentBackBufferIndex] };
-    auto backBuffer {g_BackBuffers[g_CurrentBackBufferIndex]};
+    auto commandAllocator{ g_CommandAllocators[g_CurrentBackBufferIndex] };
+    auto backBuffer{ g_BackBuffers[g_CurrentBackBufferIndex] };
 
     commandAllocator->Reset();
     g_CommandList->Reset(commandAllocator.Get(), nullptr);
 
     //clear render target
-    CD3DX12_RESOURCE_BARRIER barrier{ CD3DX12_RESOURCE_BARRIER::Transition(
+    {
+        CD3DX12_RESOURCE_BARRIER barrier{ CD3DX12_RESOURCE_BARRIER::Transition(
         backBuffer.Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET) };
 
-    g_CommandList->ResourceBarrier(1, &barrier);
+        g_CommandList->ResourceBarrier(1, &barrier);
 
-    FLOAT clearColor[]{ .4f,.6f,.9f,1.f };
-    CD3DX12_CPU_DESCRIPTOR_HANDLE rtv(g_RTVDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-        g_CurrentBackBufferIndex, g_RTVDescriptorSize);
-    g_CommandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+        FLOAT clearColor[]{ .4f,.6f,.9f,1.f };
+        CD3DX12_CPU_DESCRIPTOR_HANDLE rtv(g_RTVDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
+            g_CurrentBackBufferIndex, g_RTVDescriptorSize);
+        g_CommandList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
+    }
+
 
     // present
-    CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer.Get(),
-        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    {
+        CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(backBuffer.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 
-    g_CommandList->ResourceBarrier(1, &barrier);
-    ThrowIfFailed(g_CommandList->Close());
+        g_CommandList->ResourceBarrier(1, &barrier);
+        ThrowIfFailed(g_CommandList->Close());
 
-    ID3D12CommandList* const commandLists[]{ g_CommandList.Get() };
-    g_CommandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
+        ID3D12CommandList* const commandLists[]{ g_CommandList.Get() };
 
-    UINT syncInterval = g_VSync ? 1 : 0;
-    UINT presentFlags = g_TearingSupported && !g_VSync ? DXGI_PRESENT_ALLOW_TEARING : 0;
-    ThrowIfFailed(g_SwapChain->Present(syncInterval, presentFlags));
+        g_CommandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
 
-    g_FrameFenceValues[g_CurrentBackBufferIndex] = Signal(g_CommandQueue, g_Fence, g_FenceValue);
+        UINT syncInterval = g_VSync ? 1 : 0;
+        UINT presentFlags = g_TearingSupported && !g_VSync ? DXGI_PRESENT_ALLOW_TEARING : 0;
+        ThrowIfFailed(g_SwapChain->Present(syncInterval, presentFlags));
 
-    g_CurrentBackBufferIndex = g_SwapChain->GetCurrentBackBufferIndex();
-    WaitForFenceValue(g_Fence, g_FrameFenceValues[g_CurrentBackBufferIndex], g_FenceEvent);
+        g_FrameFenceValues[g_CurrentBackBufferIndex] = Signal(g_CommandQueue, g_Fence, g_FenceValue);
+
+        g_CurrentBackBufferIndex = g_SwapChain->GetCurrentBackBufferIndex();
+        WaitForFenceValue(g_Fence, g_FrameFenceValues[g_CurrentBackBufferIndex], g_FenceEvent);
+    }
 }
 
 void Resize(uint32_t width, uint32_t height)
@@ -490,7 +500,7 @@ void Resize(uint32_t width, uint32_t height)
     }
 }
 
-void SetFullScreen(bool fullscreen)
+void SetFullscreen(bool fullscreen)
 {
     if (g_Fullscreen != fullscreen)
     {
@@ -560,7 +570,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
                 if (alt)
                 {
             case VK_F11:
-                SetFullScreen(!g_Fullscreen);
+                SetFullscreen(!g_Fullscreen);
                 }
                 break;
             }
@@ -625,10 +635,11 @@ int CALLBACK wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdL
 
     for (size_t i = 0; i < g_NumFrames; i++)
     {
-        g_CommandAlloctors[i] = CreateCommandAllocator(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);
+        g_CommandAllocators[i] = CreateCommandAllocator(g_Device, D3D12_COMMAND_LIST_TYPE_DIRECT);
     }
 
-    g_CommandList = CreateCommandList(g_Device, g_CommandAlloctors[g_CurrentBackBufferIndex], D3D12_COMMAND_LIST_TYPE_DIRECT);
+    g_CommandList = CreateCommandList(g_Device, 
+        g_CommandAllocators[g_CurrentBackBufferIndex], D3D12_COMMAND_LIST_TYPE_DIRECT);
 
     g_Fence = CreateFence(g_Device);
     g_FenceEvent = CreateEventHandle();
