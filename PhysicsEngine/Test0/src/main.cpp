@@ -339,3 +339,39 @@ void UpdateRenderTargetViews(ComPtr<ID3D12Device2> device, ComPtr<IDXGISwapChain
         rtvHandle.Offset(rtvDescriptorSize);
     }
 }
+
+ComPtr<ID3D12CommandAllocator> CreateCommandAllocator(ComPtr<ID3D12Device2> device, D3D12_COMMAND_LIST_TYPE type)
+{
+    ComPtr<ID3D12CommandAllocator> commandAllocator{};
+    ThrowIfFailed(device->CreateCommandAllocator(type, IID_PPV_ARGS(&commandAllocator)));
+
+    return commandAllocator;
+}
+
+ComPtr<ID3D12GraphicsCommandList> CreateCommandList(ComPtr<ID3D12Device2> device,
+    ComPtr<ID3D12CommandAllocator> commandAllocator, D3D12_COMMAND_LIST_TYPE type)
+{
+    ComPtr<ID3D12GraphicsCommandList> commandList{};
+    ThrowIfFailed(device->CreateCommandList(0, type, commandAllocator.Get(), nullptr, IID_PPV_ARGS(&commandList)));
+
+    return commandList;
+}
+
+ComPtr<ID3D12Fence> CreateFence(ComPtr<ID3D12Device2> device)
+{
+    ComPtr<ID3D12Fence> fence;
+
+    ThrowIfFailed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
+
+    return fence;
+}
+
+HANDLE CreateEventHandle()
+{
+    HANDLE fenceEvent{};
+
+    fenceEvent = ::CreateEvent(NULL, FALSE, FALSE, NULL);
+    assert(fenceEvent && "Failed to create fence event.");
+
+    return fenceEvent;
+}
