@@ -10,5 +10,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin) # Output directory f
 project ("PhysicsEngine")
 
 add_subdirectory(Test0)
+add_subdirectory(Test1)
+add_subdirectory( DX12Lib )
 
 set_directory_properties(PROPERTIES VS_STARTUP_PROJECT Test0)

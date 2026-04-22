@@ -544,7 +544,6 @@ void SetFullscreen(bool fullscreen)
             ::ShowWindow(g_hWnd, SW_NORMAL);
         }
     }
-
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)

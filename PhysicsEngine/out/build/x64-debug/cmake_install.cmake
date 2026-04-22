@@ -35,6 +35,8 @@ endif()
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for each subdirectory.
   include("D:/Projects/PhysicsEngine/PhysicsEngine/out/build/x64-debug/Test0/cmake_install.cmake")
+  include("D:/Projects/PhysicsEngine/PhysicsEngine/out/build/x64-debug/Test1/cmake_install.cmake")
+  include("D:/Projects/PhysicsEngine/PhysicsEngine/out/build/x64-debug/DX12Lib/cmake_install.cmake")
 
 endif()
 
