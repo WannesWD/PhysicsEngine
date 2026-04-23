@@ -7,6 +7,9 @@ set( HEADER_FILES
     "inc/CommandQueue.h"
     "inc/Game.h"
     "inc/Window.h"
+    "inc/PCH.h"
+    "inc/Events.h"
+    "inc/HighResolutionClock.h"
 )
 
 set ( SOURCE_FILES
